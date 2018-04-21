@@ -1,0 +1,6 @@
+{
+  "frameworkVersion": 1.0,
+  "name": "Script Policy Plugin",
+  "description": "This plugin executes a script on a response.",
+  "version": "${project.version}"
+}

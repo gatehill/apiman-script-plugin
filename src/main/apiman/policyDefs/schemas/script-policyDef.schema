@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "title": "Script Policy Configuration",
+  "type": "object",
+  "properties": {
+    "scriptPath": {
+      "title": "Script path",
+      "description": "The path to the script to execute",
+      "type": "string"
+    }
+  }
+}

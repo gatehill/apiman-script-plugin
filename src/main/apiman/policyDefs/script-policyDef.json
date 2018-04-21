@@ -1,0 +1,9 @@
+{
+  "id": "apiman-script-policy",
+  "name": "Script Policy",
+  "description": "Executes a script on a response.",
+  "policyImpl": "plugin:${project.groupId}:${project.artifactId}:${project.version}:${project.packaging}/com.gatehill.apiman.plugin.script.ScriptPolicy",
+  "icon": "file",
+  "formType": "JsonSchema",
+  "form": "schemas/script-policyDef.schema"
+}
