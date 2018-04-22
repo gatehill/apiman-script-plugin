@@ -23,13 +23,20 @@ import io.apiman.gateway.engine.io.AbstractStream;
 import io.apiman.gateway.engine.io.IApimanBuffer;
 import io.apiman.gateway.engine.io.IReadWriteStream;
 import io.apiman.gateway.engine.policies.AbstractMappedDataPolicy;
+import io.apiman.gateway.engine.policy.IPolicyChain;
 import io.apiman.gateway.engine.policy.IPolicyContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import javax.script.Bindings;
 import javax.script.ScriptEngine;
 import javax.script.ScriptEngineManager;
 import java.io.BufferedReader;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+
+import static java.util.Collections.emptyMap;
+import static java.util.Objects.nonNull;
 
 /**
  * Delegates response processing to a script.
@@ -38,14 +45,38 @@ import java.nio.file.Paths;
  */
 @SuppressWarnings("nls")
 public class ScriptPolicy extends AbstractMappedDataPolicy<ScriptPolicyConfig> {
+    private static final Logger LOGGER = LoggerFactory.getLogger(ScriptPolicy.class);
+
+    /**
+     * Shared per https://stackoverflow.com/a/30159424/1691669
+     */
+    private final ScriptEngine engine;
+
     @Override
     protected Class<ScriptPolicyConfig> getConfigurationClass() {
         return ScriptPolicyConfig.class;
     }
 
     @Override
+    protected void doApply(ApiRequest request, IPolicyContext context, ScriptPolicyConfig config, IPolicyChain<ApiRequest> chain) {
+        context.setAttribute("url", request.getUrl());
+        chain.doApply(request);
+    }
+
+    @Override
+    protected void doApply(ApiResponse response, IPolicyContext context, ScriptPolicyConfig config, IPolicyChain<ApiResponse> chain) {
+        context.setAttribute("responseHeaders", response.getHeaders().toMap());
+        chain.doApply(response);
+    }
+
+    @Override
     protected IReadWriteStream<ApiRequest> requestDataHandler(ApiRequest request, IPolicyContext context, ScriptPolicyConfig config) {
         return null;
+    }
+
+    public ScriptPolicy() {
+        final ScriptEngineManager manager = new ScriptEngineManager();
+        engine = manager.getEngineByName("javascript");
     }
 
     @Override
@@ -70,20 +101,31 @@ public class ScriptPolicy extends AbstractMappedDataPolicy<ScriptPolicyConfig> {
 
             @Override
             public void end() {
-                final ScriptEngineManager manager = new ScriptEngineManager();
-                final ScriptEngine engine = manager.getEngineByName("javascript");
+                final String url = context.getAttribute("url", null);
 
-                final String responseBody = buffer.toString();
-                engine.put("responseBody", responseBody);
+                // a bindings should be created for each invocation in a multithreaded environment,
+                // if sharing an engine, per https://stackoverflow.com/a/30159424/1691669
+                final Bindings bindings = engine.createBindings();
+
+                bindings.put("logger", LOGGER);
+                bindings.put("url", url);
+                bindings.put("responseHeaders", context.getAttribute("responseHeaders", emptyMap()));
+                bindings.put("responseBody", buffer.toString());
 
                 try (final BufferedReader script = Files.newBufferedReader(Paths.get(config.getScriptFile()))) {
-                    engine.eval(script);
+                    LOGGER.debug("Executing script on API response for {}", url);
+                    engine.eval(script, bindings);
 
-                    final String updatedResponseBody = (String) engine.get("responseBody");
-                    super.write(bufferFactory.createBuffer(updatedResponseBody));
+                    // the body may have been mutated
+                    final IApimanBuffer responseBuffer = bufferFactory.createBuffer();
+                    final String responseBody = (String) bindings.get("responseBody");
+                    if (nonNull(responseBody) && !responseBody.isEmpty()) {
+                        responseBuffer.append(responseBody);
+                    }
+                    super.write(responseBuffer);
 
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    LOGGER.error("Error executing script on API response for {}", url, e);
                 }
 
                 super.end();
