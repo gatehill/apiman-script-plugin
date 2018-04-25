@@ -1,4 +1,4 @@
 {
   "scriptFile": "classpath:/test-script.js",
-  "captureBody": true
+  "captureBody": false
 }

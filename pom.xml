@@ -83,6 +83,11 @@
                 <artifactId>slf4j-api</artifactId>
                 <version>${version.org.slf4j}</version>
             </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-log4j12</artifactId>
+                <version>${version.org.slf4j}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
@@ -133,6 +138,11 @@
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <artifactId>slf4j-log4j12</artifactId>
+            <groupId>org.slf4j</groupId>
             <scope>test</scope>
         </dependency>
     </dependencies>

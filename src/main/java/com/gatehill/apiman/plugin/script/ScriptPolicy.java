@@ -16,6 +16,7 @@
 package com.gatehill.apiman.plugin.script;
 
 import com.gatehill.apiman.plugin.script.beans.ScriptPolicyConfig;
+import com.gatehill.apiman.plugin.script.model.ResponseWrapper;
 import io.apiman.gateway.engine.beans.ApiRequest;
 import io.apiman.gateway.engine.beans.ApiResponse;
 import io.apiman.gateway.engine.components.IBufferFactoryComponent;
@@ -32,10 +33,11 @@ import javax.script.Bindings;
 import javax.script.ScriptEngine;
 import javax.script.ScriptEngineManager;
 import java.io.BufferedReader;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 
-import static java.util.Collections.emptyMap;
 import static java.util.Objects.nonNull;
 
 /**
@@ -64,12 +66,6 @@ public class ScriptPolicy extends AbstractMappedDataPolicy<ScriptPolicyConfig> {
     }
 
     @Override
-    protected void doApply(ApiResponse response, IPolicyContext context, ScriptPolicyConfig config, IPolicyChain<ApiResponse> chain) {
-        context.setAttribute("responseHeaders", response.getHeaders().toMap());
-        chain.doApply(response);
-    }
-
-    @Override
     protected IReadWriteStream<ApiRequest> requestDataHandler(ApiRequest request, IPolicyContext context, ScriptPolicyConfig config) {
         return null;
     }
@@ -82,7 +78,7 @@ public class ScriptPolicy extends AbstractMappedDataPolicy<ScriptPolicyConfig> {
     @Override
     protected IReadWriteStream<ApiResponse> responseDataHandler(ApiResponse response, IPolicyContext context, ScriptPolicyConfig config) {
         final IBufferFactoryComponent bufferFactory = context.getComponent(IBufferFactoryComponent.class);
-        final IApimanBuffer buffer = bufferFactory.createBuffer();
+        final IApimanBuffer buffer = config.getCaptureBody() ? bufferFactory.createBuffer() : null;
 
         return new AbstractStream<ApiResponse>() {
             @Override
@@ -96,7 +92,11 @@ public class ScriptPolicy extends AbstractMappedDataPolicy<ScriptPolicyConfig> {
 
             @Override
             public void write(IApimanBuffer chunk) {
-                buffer.append(chunk);
+                if (config.getCaptureBody()) {
+                    buffer.append(chunk);
+                } else {
+                    super.write(chunk);
+                }
             }
 
             @Override
@@ -109,27 +109,48 @@ public class ScriptPolicy extends AbstractMappedDataPolicy<ScriptPolicyConfig> {
 
                 bindings.put("logger", LOGGER);
                 bindings.put("url", url);
-                bindings.put("responseHeaders", context.getAttribute("responseHeaders", emptyMap()));
-                bindings.put("responseBody", buffer.toString());
 
-                try (final BufferedReader script = Files.newBufferedReader(Paths.get(config.getScriptFile()))) {
+                final ResponseWrapper responseWrapper = new ResponseWrapper(response, config.getCaptureBody() ? buffer : null);
+                bindings.put("response", responseWrapper);
+
+                try (final BufferedReader script = Files.newBufferedReader(getScriptPath(config))) {
                     LOGGER.debug("Executing script on API response for {}", url);
                     engine.eval(script, bindings);
 
-                    // the body may have been mutated
-                    final IApimanBuffer responseBuffer = bufferFactory.createBuffer();
-                    final String responseBody = (String) bindings.get("responseBody");
-                    if (nonNull(responseBody) && !responseBody.isEmpty()) {
-                        responseBuffer.append(responseBody);
+                    if (config.getCaptureBody()) {
+                        if (responseWrapper.isBufferDirty()) {
+                            // the body was mutated
+                            final IApimanBuffer responseBuffer = bufferFactory.createBuffer();
+                            final String responseBody = responseWrapper.getStringBuffer();
+                            if (nonNull(responseBody) && !responseBody.isEmpty()) {
+                                responseBuffer.append(responseBody);
+                            }
+                            super.write(responseBuffer);
+
+                        } else {
+                            super.write(buffer);
+                        }
+                    } else {
+                        LOGGER.trace("Body capture is disabled");
                     }
-                    super.write(responseBuffer);
 
                 } catch (Exception e) {
                     LOGGER.error("Error executing script on API response for {}", url, e);
+                    response.setCode(500);
+                    response.setMessage("Internal Server Error");
                 }
 
                 super.end();
             }
         };
+    }
+
+    private Path getScriptPath(ScriptPolicyConfig config) throws URISyntaxException {
+        LOGGER.trace("Loading script file: {}", config.getScriptFile());
+        if (config.getScriptFile().startsWith("classpath:")) {
+            return Paths.get(ScriptPolicy.class.getResource(config.getScriptFile().substring(10)).toURI());
+        } else {
+            return Paths.get(config.getScriptFile());
+        }
     }
 }
